@@ -1,10 +1,10 @@
 from flask import Flask, render_template, request, jsonify, send_file
 from werkzeug.utils import secure_filename
-import google.generativeai as genai
 from PIL import Image
 from io import BytesIO
 import os
 import base64
+import requests
 from datetime import datetime
 from dotenv import load_dotenv
 
@@ -17,9 +17,9 @@ app.config['OUTPUT_FOLDER'] = 'output'
 
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'webp'}
 
-# Configure Gemini API
-genai.configure(api_key=os.getenv('GOOGLE_API_KEY'))
-model = genai.GenerativeModel('gemini-2.0-flash-exp')
+# API Configuration
+NANO_GPT_API_KEY = os.getenv('NANO_GPT_API_KEY')
+NANO_GPT_API_URL = "https://nano-gpt.com/v1/images/generations"
 
 def allowed_file(filename):
     return '.' in filename and \
@@ -32,13 +32,17 @@ def index():
 @app.route('/generate', methods=['POST'])
 def generate():
     try:
+        # Check if API key is configured
+        if not NANO_GPT_API_KEY:
+            return jsonify({'error': 'API 키가 설정되지 않았습니다. .env 파일에 NANO_GPT_API_KEY를 추가해주세요.'}), 500
+
         # Get text prompt
         prompt = request.form.get('prompt')
         if not prompt:
             return jsonify({'error': '텍스트 프롬프트를 입력해주세요.'}), 400
 
-        # Get uploaded images
-        images = []
+        # Get uploaded images for image-to-image generation
+        image_data_urls = []
         if 'images' in request.files:
             files = request.files.getlist('images')
             for file in files:
@@ -48,55 +52,75 @@ def generate():
                     # Convert to RGB if necessary
                     if img.mode not in ('RGB', 'RGBA'):
                         img = img.convert('RGB')
-                    images.append(img)
 
-        # Prepare content for Gemini API
-        content_parts = []
+                    # Convert to base64 data URL
+                    buffered = BytesIO()
+                    img.save(buffered, format='PNG')
+                    img_str = base64.b64encode(buffered.getvalue()).decode()
+                    image_data_url = f"data:image/png;base64,{img_str}"
+                    image_data_urls.append(image_data_url)
 
-        # Add images to content
-        for img in images:
-            # Convert PIL image to bytes
-            img_byte_arr = BytesIO()
-            img.save(img_byte_arr, format='PNG')
-            img_byte_arr.seek(0)
-            content_parts.append(img)
+        # Prepare API request
+        headers = {
+            'Authorization': f'Bearer {NANO_GPT_API_KEY}',
+            'Content-Type': 'application/json'
+        }
 
-        # Add text prompt
-        final_prompt = f"""Based on the provided images (if any), {prompt}
+        # Build request payload
+        payload = {
+            'model': 'hidream',  # You can change this to other models
+            'prompt': prompt,
+            'n': 1,
+            'size': '1024x1024',
+            'response_format': 'b64_json'
+        }
 
-        Generate a new image following these instructions.
-        If no images are provided, create an image based solely on the text description."""
+        # Add image data if available (for image-to-image)
+        if image_data_urls:
+            if len(image_data_urls) == 1:
+                payload['imageDataUrl'] = image_data_urls[0]
+            else:
+                payload['imageDataUrls'] = image_data_urls
 
-        content_parts.append(final_prompt)
+        # Call Nano-GPT API
+        response = requests.post(NANO_GPT_API_URL, headers=headers, json=payload)
 
-        # Generate content using Gemini
-        response = model.generate_content(content_parts)
+        if response.status_code == 200:
+            result = response.json()
 
-        # For text-to-image, we'll use a different approach
-        # Since Gemini 2.0 Flash doesn't generate images directly,
-        # we'll create a placeholder response for now
+            # Extract base64 image from response
+            if 'data' in result and len(result['data']) > 0:
+                b64_json = result['data'][0].get('b64_json')
 
-        # Save a placeholder or process the response
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        output_filename = f'generated_{timestamp}.png'
-        output_path = os.path.join(app.config['OUTPUT_FOLDER'], output_filename)
+                if b64_json:
+                    # Decode base64 to image
+                    img_data = base64.b64decode(b64_json)
 
-        # For demonstration, save the first uploaded image or create a placeholder
-        if images:
-            images[0].save(output_path)
-            success_message = "이미지가 처리되었습니다. (데모: 첫 번째 이미지 저장)"
+                    # Save image
+                    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                    output_filename = f'generated_{timestamp}.png'
+                    output_path = os.path.join(app.config['OUTPUT_FOLDER'], output_filename)
+
+                    with open(output_path, 'wb') as f:
+                        f.write(img_data)
+
+                    # Get cost information if available
+                    cost_info = ""
+                    if 'cost' in result:
+                        cost_info = f" (비용: {result['cost']})"
+
+                    return jsonify({
+                        'success': True,
+                        'message': f'이미지가 성공적으로 생성되었습니다!{cost_info}',
+                        'filename': output_filename,
+                        'prompt_response': f'Nano-GPT API를 사용하여 이미지를 생성했습니다.'
+                    })
+
+            return jsonify({'error': '이미지 생성 응답을 처리할 수 없습니다.'}), 500
+
         else:
-            # Create a placeholder image
-            placeholder = Image.new('RGB', (512, 512), color='#FFD548')
-            placeholder.save(output_path)
-            success_message = "플레이스홀더 이미지가 생성되었습니다."
-
-        return jsonify({
-            'success': True,
-            'message': success_message,
-            'filename': output_filename,
-            'prompt_response': response.text if response.text else "이미지 생성 프롬프트 처리 완료"
-        })
+            error_msg = response.json().get('error', '알 수 없는 오류') if response.text else f'HTTP {response.status_code}'
+            return jsonify({'error': f'API 오류: {error_msg}'}), 500
 
     except Exception as e:
         print(f"Error: {str(e)}")
@@ -106,7 +130,14 @@ def generate():
 def download(filename):
     try:
         filepath = os.path.join(app.config['OUTPUT_FOLDER'], filename)
-        return send_file(filepath, as_attachment=True)
+        return send_file(filepath, as_attachment=True, download_name=filename)
+    except Exception as e:
+        return jsonify({'error': f'파일을 찾을 수 없습니다: {str(e)}'}), 404
+
+@app.route('/output/<filename>')
+def serve_output(filename):
+    try:
+        return send_file(os.path.join(app.config['OUTPUT_FOLDER'], filename))
     except Exception as e:
         return jsonify({'error': f'파일을 찾을 수 없습니다: {str(e)}'}), 404
 

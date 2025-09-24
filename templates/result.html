@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+
+{% block title %}나도 바나나 - 생성 결과{% endblock %}
+
+{% block content %}
+<div class="result-page">
+    <h2>이미지 생성 완료!</h2>
+
+    {% if filename %}
+    <div class="result-image-container">
+        <img src="/output/{{ filename }}" alt="Generated Image" class="result-image">
+    </div>
+
+    <div class="result-actions">
+        <a href="/download/{{ filename }}" class="btn btn-primary">이미지 다운로드</a>
+        <a href="/" class="btn btn-secondary">새 이미지 생성</a>
+    </div>
+    {% else %}
+    <p class="error-text">이미지를 찾을 수 없습니다.</p>
+    <a href="/" class="btn btn-primary">돌아가기</a>
+    {% endif %}
+</div>
+{% endblock %}

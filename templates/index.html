@@ -1,0 +1,136 @@
+{% extends "base.html" %}
+
+{% block title %}나도 바나나 - AI 이미지 생성{% endblock %}
+
+{% block content %}
+<div class="main-content">
+    <div class="intro-section">
+        <h2>AI로 새로운 이미지를 만들어보세요!</h2>
+        <p>이미지를 업로드하고 텍스트 프롬프트를 입력하면 AI가 새로운 이미지를 생성합니다.</p>
+    </div>
+
+    <form id="generateForm" action="/generate" method="POST" enctype="multipart/form-data">
+        <div class="upload-section">
+            <div id="dropZone" class="drop-zone">
+                <div class="drop-zone-content">
+                    <svg class="upload-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                    </svg>
+                    <p class="drop-text">이미지를 여기에 드래그하세요</p>
+                    <p class="drop-subtext">또는 클릭하여 파일 선택</p>
+                    <input type="file" id="fileInput" name="images" multiple accept="image/*" style="display: none;">
+                </div>
+            </div>
+
+            <div id="previewContainer" class="preview-container"></div>
+        </div>
+
+        <div class="prompt-section">
+            <label for="prompt" class="prompt-label">
+                텍스트 프롬프트 <span class="required">*필수</span>
+            </label>
+            <textarea
+                id="prompt"
+                name="prompt"
+                class="prompt-input"
+                rows="4"
+                placeholder="생성하고 싶은 이미지에 대해 자세히 설명해주세요. 예: '밝은 햇살 아래 피어난 노란 바나나 꽃을 배경으로 한 평화로운 정원'"
+                required></textarea>
+        </div>
+
+        <button type="submit" id="generateBtn" class="generate-btn">
+            <span id="btnText">이미지 생성하기</span>
+            <div class="spinner" id="spinner"></div>
+        </button>
+    </form>
+
+    <div id="errorMessage" class="error-message" style="display: none;"></div>
+    <div id="successMessage" class="success-message" style="display: none;"></div>
+</div>
+
+<!-- Modal for generated image -->
+<div id="resultModal" class="modal" style="display: none;">
+    <div class="modal-content">
+        <span class="close">&times;</span>
+        <h2>생성된 이미지</h2>
+        <div id="resultContainer"></div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const form = document.getElementById('generateForm');
+    const generateBtn = document.getElementById('generateBtn');
+    const btnText = document.getElementById('btnText');
+    const spinner = document.getElementById('spinner');
+    const errorMessage = document.getElementById('errorMessage');
+    const successMessage = document.getElementById('successMessage');
+    const resultModal = document.getElementById('resultModal');
+    const resultContainer = document.getElementById('resultContainer');
+    const closeModal = document.querySelector('.close');
+
+    form.addEventListener('submit', async function(e) {
+        e.preventDefault();
+
+        // Reset messages
+        errorMessage.style.display = 'none';
+        successMessage.style.display = 'none';
+
+        // Show loading state
+        generateBtn.disabled = true;
+        btnText.textContent = '생성 중...';
+        spinner.style.display = 'inline-block';
+
+        const formData = new FormData(form);
+
+        try {
+            const response = await fetch('/generate', {
+                method: 'POST',
+                body: formData
+            });
+
+            const data = await response.json();
+
+            if (data.success) {
+                successMessage.textContent = data.message || '이미지가 성공적으로 생성되었습니다!';
+                successMessage.style.display = 'block';
+
+                // Show result in modal
+                resultContainer.innerHTML = `
+                    <img src="/output/${data.filename}" alt="Generated Image" class="generated-image">
+                    <div class="result-actions">
+                        <a href="/download/${data.filename}" class="download-btn">이미지 다운로드</a>
+                    </div>
+                    <p class="response-text">${data.prompt_response}</p>
+                `;
+                resultModal.style.display = 'block';
+            } else {
+                errorMessage.textContent = data.error || '이미지 생성에 실패했습니다.';
+                errorMessage.style.display = 'block';
+            }
+        } catch (error) {
+            errorMessage.textContent = '서버 연결에 실패했습니다.';
+            errorMessage.style.display = 'block';
+        } finally {
+            // Reset button state
+            generateBtn.disabled = false;
+            btnText.textContent = '이미지 생성하기';
+            spinner.style.display = 'none';
+        }
+    });
+
+    // Modal close handler
+    closeModal.onclick = function() {
+        resultModal.style.display = 'none';
+    };
+
+    window.onclick = function(event) {
+        if (event.target == resultModal) {
+            resultModal.style.display = 'none';
+        }
+    };
+});
+</script>
+{% endblock %}
